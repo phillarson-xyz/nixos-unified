@@ -3,38 +3,13 @@ on:
   push:
     branches:
       - master
-  pull_request:
 jobs:
-  configure:
-    runs-on: x86_64-linux
-    outputs:
-      matrix: ${{ steps.set-matrix.outputs.matrix }}
-    steps:
-      - uses: actions/checkout@v4
-      - id: set-matrix
-        run: echo "matrix=$(om ci gh-matrix --systems=x86_64-linux,x86_64-darwin,aarch64-darwin | jq -c .)" >> $GITHUB_OUTPUT
-  nix:
-    runs-on: ${{ matrix.system }}
-    permissions:
-      contents: read
-    needs: configure
-    strategy:
-      matrix: ${{ fromJson(needs.configure.outputs.matrix) }}
-      fail-fast: false
-    steps:
-      - uses: actions/checkout@v4
-      - name: om ci
-        run: |
-          om ci run \
-            --extra-access-tokens "github.com=${{ secrets.GITHUB_TOKEN }}" \
-            --systems "${{ matrix.system }}" \
-            .#default.${{ matrix.subflake}}
-
   website-upload:
-    runs-on: x86_64-linux
+    runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/master'
     steps:
       - uses: actions/checkout@v4
+      - uses: nixbuild/nix-quick-install-action@v33
       - name: Build docs
         run: |
           cd doc && nix build
@@ -44,7 +19,7 @@ jobs:
           path: doc/result
 
   website-deploy:
-    runs-on: x86_64-linux
+    runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/master'
     needs: website-upload
     environment:
