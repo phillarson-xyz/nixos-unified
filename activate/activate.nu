@@ -55,8 +55,7 @@ def activate_home [ user: string, host: string, --dry-run ] {
     if (($host | is-empty) or ($host == $CURRENT_HOSTNAME)) {
         activate_home_local $user $host --dry-run=$dry_run
     } else {
-        log error $"Remote activation not yet supported for homeConfigurations"
-        exit 1
+        activate_home_remote_ssh $user $host --dry-run=$dry_run
     }
 }
 
@@ -66,6 +65,19 @@ def activate_home_local [ user: string, host: string, --dry-run ] {
     log info $"Activating home configuration ($name) (ansi purple)locally(ansi reset)"
     log info $"(ansi blue_bold)>>>(ansi reset) home-manager switch ($extraArgs | str join) --flake ($data.cleanFlake)#($name)"
     home-manager switch ...$extraArgs -b (date now | format date "nixos-unified.%Y-%m-%d-%H:%M:%S.bak") --flake $"($data.cleanFlake)#($name)"
+}
+
+def activate_home_remote_ssh [ user: string, host: string, --dry-run ] {
+    let name = $"($user)@($host)"
+    let sshTarget = $"($user)@($host)"
+    log info $"Activating home configuration ($name) (ansi purple_reverse)remotely(ansi reset) on ($sshTarget)"
+
+    # Copy the flake to the remote host.
+    nix_copy $data.cleanFlake $"ssh-ng://($sshTarget)"
+
+    # We re-run this activation script, but on the remote host (where it will invoke activate_home_local).
+    log info $'(ansi blue_bold)>>>(ansi reset) ssh -t ($sshTarget) nix --extra-experimental-features '"nix-command flakes"' run $"($data.cleanFlake)#activate" -- ($name) --dry-run=($dry_run)'
+    ssh -t $sshTarget nix --extra-experimental-features '"nix-command flakes"' run $"($data.cleanFlake)#activate" -- ($name) --dry-run=($dry_run)
 }
 
 def activate_system [ hostData: record, --dry-run=false ] {
@@ -94,8 +106,14 @@ def activate_system_local [ hostData: record, --dry-run=false ] {
         sudo darwin-rebuild $subcommand --flake $hostData.flake ...$hostData.outputs.nixArgs
     } else {
         let subcommand = if $dry_run { "dry-activate" } else { "switch" }
-        log info $"(ansi blue_bold)>>>(ansi reset) nixos-rebuild ($subcommand) --flake ($hostData.flake) ($hostData.outputs.nixArgs | str join) --use-remote-sudo "
-        nixos-rebuild $subcommand --flake $hostData.flake ...$hostData.outputs.nixArgs --use-remote-sudo
+        if $hostData.localPrivilegeMode == "sudo-nixos-rebuild" {
+            let nixosRebuild = "/run/current-system/sw/bin/nixos-rebuild"
+            log info $"(ansi blue_bold)>>>(ansi reset) sudo ($nixosRebuild) ($subcommand) --flake ($hostData.flake) ($hostData.outputs.nixArgs | str join)"
+            sudo $nixosRebuild $subcommand --flake $hostData.flake ...$hostData.outputs.nixArgs
+        } else {
+            log info $"(ansi blue_bold)>>>(ansi reset) nixos-rebuild ($subcommand) --flake ($hostData.flake) ($hostData.outputs.nixArgs | str join) --sudo"
+            nixos-rebuild $subcommand --flake $hostData.flake ...$hostData.outputs.nixArgs --sudo
+        }
     }
 }
 
@@ -114,6 +132,6 @@ def activate_system_remote_ssh [ hostData: record, --dry-run=false ] {
 }
 
 def nix_copy [ src: string dst: string ] {
-    log info $"(ansi blue_bold)>>>(ansi reset) nix copy ($src) --to ($dst)"
-    nix copy $src --to $dst
+    log info $"(ansi blue_bold)>>>(ansi reset) nix --extra-experimental-features \"nix-command flakes\" copy ($src) --to ($dst)"
+    nix --extra-experimental-features "nix-command flakes" copy $src --to $dst
 }
